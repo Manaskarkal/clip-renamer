@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>GoPro Clip Renamer</title>
+<style>
+  /* Design tokens: change colours here. White page, thin lines, square corners, one accent colour. */
+  :root { --fg:#111827; --muted:#5b6472; --line:#c9ced6; --line-strong:#8a93a0; --head:#f4f5f7;
+          --accent:#0b5cad; --accent-fg:#fff; --tick:#e8f1fb; --warn-bg:#fff7e0; --warn-fg:#5c4400; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#fff; color:var(--fg); font:15px/1.5 system-ui,"Segoe UI",Arial,sans-serif; }
+  .wrap { max-width:1040px; margin:0 auto; padding:24px 20px 56px; }
+  header { border-bottom:2px solid var(--fg); padding-bottom:12px; margin-bottom:20px; }
+  h1 { font-size:22px; margin:0; }
+  header p { margin:2px 0 0; color:var(--muted); }
+
+  /* A "card" is a ruled box: grey title strip, thin border. */
+  .card { border:1px solid var(--line); margin-bottom:20px; background:#fff; }
+  .card > h2 { margin:0; padding:9px 14px; background:var(--head); border-bottom:1px solid var(--line);
+               font-size:12px; letter-spacing:.07em; text-transform:uppercase; }
+  .num { color:var(--accent); } .num::after { content:"."; margin-right:6px; }
+  .card > :not(h2) { margin-left:14px; margin-right:14px; }
+  .card > h2 + * { margin-top:14px; }
+  .card > :last-child { margin-bottom:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:20px; }
+  .grid .card { margin-bottom:0; }
+  .needs-source > .card { margin-top:20px; }
+  body:not([data-ready]) .needs-source { opacity:.45; pointer-events:none; }   /* steps 2-4 wait for step 1 */
+
+  .muted { color:var(--muted); } .hint { color:var(--muted); font-size:13px; margin-top:10px; margin-bottom:0; }
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  .bar.first { margin-top:14px; } .spacer { margin-left:auto; }
+  .btn { font:inherit; font-weight:600; padding:7px 14px; border:1px solid var(--line-strong); border-radius:0; background:#fff; color:var(--fg); cursor:pointer; }
+  .btn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+  .btn.primary:hover:not(:disabled) { background:#094a8c; color:var(--accent-fg); }
+  .btn.small { padding:3px 10px; font-weight:500; font-size:13px; }
+  .btn.wide { width:100%; margin-top:14px; padding:10px; }
+  .btn:disabled { opacity:.4; cursor:not-allowed; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  label { display:block; font-size:13px; font-weight:600; margin:12px 0 4px; }
+  input, select { font:inherit; width:100%; padding:7px 10px; border:1px solid var(--line-strong); border-radius:0; background:#fff; color:var(--fg); }
+  input + input { margin-top:6px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+  .tablebox { max-height:300px; overflow:auto; border:1px solid var(--line); }
+  table { border-collapse:collapse; width:100%; }
+  th { position:sticky; top:0; background:var(--head); text-align:left; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  th, td { padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  td.right, th.right { text-align:right; }
+  tr.clip { cursor:pointer; user-select:none; } tr.clip:hover { background:#f3f6fa; }
+  tr.clip.ticked { background:var(--tick); } tr.clip.ticked td:first-child { box-shadow:inset 3px 0 0 var(--accent); }
+  tr.alt { background:var(--head); }
+  .box { display:inline-grid; place-items:center; width:16px; height:16px; border:2px solid var(--muted); vertical-align:middle; }
+  .ticked .box { background:var(--accent); border-color:var(--accent); }
+  .ticked .box::after { content:""; width:4px; height:8px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1px); }
+  .empty { margin:0; padding:18px 12px; color:var(--muted); text-align:center; }
+  .chip { border:1px solid var(--line); background:var(--head); font:13px/1.5 Consolas,monospace; padding:9px 12px; white-space:pre-line; word-break:break-all; min-height:3.4em; }
+  .notice { border:1px solid #d9a400; border-left-width:4px; background:var(--warn-bg); color:var(--warn-fg); padding:10px 14px; margin-bottom:20px; }
+  dialog { border:1px solid var(--fg); border-radius:0; background:#fff; color:var(--fg); padding:20px; max-width:460px; }
+  dialog::backdrop { background:rgba(0,0,0,.35); }
+  #dlgMsg { margin:0 0 16px; white-space:pre-line; }
+  #dlg .bar { justify-content:flex-end; margin:0; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--fg); color:#fff; padding:10px 18px; display:none; }
+  #toast.show { display:block; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>GoPro Clip Renamer</h1>
+  <p>An attempt to reduce the time taken to rename video files.</p>
+</header>
+<div id="unsupported" class="notice" hidden>This page needs a recent version of <b>Microsoft Edge or Google Chrome</b> to rename files. Please open it in one of those.</div>
+
+<section class="card">
+  <h2><span class="num">1</span>Choose your clips</h2>
+  <div class="bar first">
+    <button id="pickFolder" class="btn primary">Choose folder&hellip;</button>
+    <button id="pickFiles" class="btn">Choose individual files&hellip;</button>
+    <span id="source" class="muted">Nothing chosen yet</span>
+  </div>
+  <p class="hint"><b>Folder:</b> Lists all videos inside.<br> <b>Individual files:</b> Pick specific clips; you will be asked to approve their folder (required for renaming). <br> <i>Browsers will ask for permission once (choose <b>Allow</b>).</i> 
+  </p>
+</section>
+
+<div class="needs-source">
+  <div class="grid">
+    <section class="card">
+      <h2><span class="num">2</span>Tick the clips</h2>
+      <div class="tablebox">
+        <table><thead><tr><th style="width:34px"></th><th>Clip</th><th>Filmed</th><th class="right">Size</th></tr></thead>
+        <tbody id="clipRows"></tbody></table>
+        <p id="clipEmpty" class="empty"></p>
+      </div>
+      <div class="bar">
+        <button id="tickAll" class="btn small">Tick all</button>
+        <button id="untickAll" class="btn small">Untick all</button>
+        <span id="status" class="muted"></span>
+      </div>
+      <p class="hint">Click a clip to tick it. Shift+click ticks a range. Double-click plays it.</p>
+    </section>
+
+    <section class="card">
+      <h2><span class="num">3</span>Describe the ticked clips</h2>
+      <div class="two">
+        <div><label for="date" style="margin-top:0">Date</label><input type="date" id="date"></div>
+        <div><label for="startAt" style="margin-top:0">Start at</label><input type="number" id="startAt" min="1" placeholder="Auto"></div>
+      </div>
+      <label for="athlete">Athlete</label>
+      <input id="athlete" list="athleteList" autocomplete="off" placeholder="e.g. Jane Smith"><datalist id="athleteList"></datalist>
+      <div class="two">
+        <div><label for="skill">Skill</label><select id="skill"></select>
+          <input id="skillOwn" placeholder="Type the skill" autocomplete="off" hidden></div>
+        <div><label for="variant">Variant</label><select id="variant"></select>
+          <input id="variantOwn" placeholder="Type the variant" autocomplete="off" hidden></div>
+      </div>
+      <label>File name preview</label>
+      <div id="preview" class="chip" aria-live="polite"></div>
+      <button id="assign" class="btn primary wide">Assign ticked clips &#8595;</button>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2><span class="num">4</span>Check, then rename</h2>
+    <div class="tablebox" id="queueBox" hidden>
+      <table><thead><tr><th>Current name</th><th>New name</th></tr></thead><tbody id="queueRows"></tbody></table>
+    </div>
+    <p id="queueEmpty" class="empty">Nothing queued yet. Tick clips, describe them, then click Assign.</p>
+    <div class="bar">
+      <button id="removeGroup" class="btn" disabled>Remove last batch</button>
+      <button id="undo" class="btn" disabled>Undo last rename</button>
+      <button id="saveLog" class="btn" disabled title="Optional: saves old and new names as a CSV in your Downloads folder">Save rename log&hellip;</button>
+      <button id="rename" class="btn primary spacer" disabled>Rename files</button>
+    </div>
+  </section>
+</div>
+</div>
+
+<dialog id="dlg"><p id="dlgMsg"></p><div class="bar"><button id="dlgNo" class="btn">Cancel</button><button id="dlgYes" class="btn primary">OK</button></div></dialog>
+<div id="toast" role="status"></div>
+
+<script>
+"use strict";
+/* ===================== CONFIGURATION (edit here) ===================== */
+// Parts of the file name, in order. Allowed: "date","athlete","skill","variant","number".
+// Re-order or remove parts and everything (preview, numbering, renaming) follows.
+const FILENAME_PARTS = ["date", "athlete", "skill", "variant", "number"];
+const SEPARATOR = "_";
+const DATE_FORMAT = "YYYY-MM-DD";      // tokens: YYYY, YY, MM, DD  (e.g. "DDMMYYYY")
+const NUMBER_PADDING = 2;              // 2 -> 01, 02, ... 10
+const SPACE_REPLACEMENT = "";          // "Jane Smith" -> "JaneSmith" (use "-" for Jane-Smith)
+const SKILLS = {                       // skill -> variants offered in the drop-down
+  Turn:   ["BackToBreast", "BreastToFree", "FlyToBack", "Freestyle", "Backstroke", "Breaststroke", "Butterfly"],
+  Start:  ["Block", "Backstroke", "Relay"],
+  Stroke: ["Freestyle", "Backstroke", "Breaststroke", "Butterfly"]
+};
+// Video types that are listed (lower case). Add more here if your files use another type.
+const VIDEO_EXTENSIONS = [".mp4", ".mov", ".m4v", ".avi", ".mkv", ".mts", ".m2ts", ".wmv", ".360"];
+// Skill/variant drop-downs always end with "Type my own...", so anything new can be typed.
+const OWN = "__own__";
+
+/* ============================ STATE ============================ */
+let dirHandle = null;          // the chosen folder
+let clips = [];                // video files: {name, stem, handle, modified, size}
+let allStems = new Set();      // names (no extension) of EVERY file in the folder
+let ticked = new Set();        // names of ticked clips
+let queue = [];                // jobs waiting for "Rename now": {clip, newName, group}
+let lastBatch = [];            // finished renames, for Undo: {handle, oldName, newName}
+let sessionLog = [];           // old -> new names this session (only saved if the coach clicks "Save rename log")
+let visible = [];              // clips currently shown in the list
+let anchor = null;             // last clicked row (for Shift+click)
+let scanInfo = { files: 0, exts: {}, subfolders: [] };   // what the folder contained (for the "nothing found" message)
+let nextGroup = 1;
+let pickedNames = null;        // lower-case names when only individually picked files are listed; null = whole folder
+let doneNames = new Set();     // new names of files renamed this session (kept out of the list)
+const $ = id => document.getElementById(id);
+
+/* ======================== CORE LOGIC (no DOM) ======================== */
+const stemOf = name => name.replace(/\.[^.]*$/, "");
+const extOf = name => (name.match(/\.[^.]*$/) || [""])[0];
+const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Make one piece of text safe for a Windows file name.
+function cleanComponent(text) {
+  return String(text).trim().replace(/\s+/g, SPACE_REPLACEMENT)
+    .replace(/[\\/:*?"<>|]/g, "").replace(/[. ]+$/, "");
+}
+
+// "2026-11-06" (from the date box) -> text in the configured DATE_FORMAT.
+function formatDate(iso) {
+  const [y, m, d] = iso.split("-");
+  return DATE_FORMAT.replace("YYYY", y).replace("YY", y.slice(2)).replace("MM", m).replace("DD", d);
+}
+
+// Build a file name WITHOUT extension. Empty parts are skipped (no double separators).
+function buildStem(fields, numberText) {
+  const values = { ...fields, number: numberText };
+  return FILENAME_PARTS
+    .map(p => p === "number" ? numberText : cleanComponent(values[p] || ""))
+    .filter(Boolean).join(SEPARATOR);
+}
+
+// Next free number for this athlete/skill/variant/date = highest existing + 1.
+function nextNumber(fields, takenStems) {
+  const TOKEN = "<<N>>";
+  const template = buildStem(fields, TOKEN);
+  const pattern = new RegExp("^" + template.split(TOKEN).map(escapeRegex).join("(\\d+)") + "$", "i");
+  let highest = 0;
+  for (const stem of takenStems) {
+    const m = pattern.exec(stem);
+    if (m) highest = Math.max(highest, parseInt(m[1], 10));
+  }
+  return highest + 1;
+}
+
+// Names already used: on disk, plus queued in this session.
+const takenStems = () => new Set([...allStems, ...queue.map(j => stemOf(j.newName))]);
+
+// Check configuration once at start-up so typos in FILENAME_PARTS are caught.
+function validateConfig() {
+  const known = ["date", "athlete", "skill", "variant", "number"];
+  const bad = FILENAME_PARTS.filter(p => !known.includes(p));
+  if (bad.length) throw new Error("Unknown part(s) in FILENAME_PARTS: " + bad.join(", "));
+  if (!FILENAME_PARTS.includes("number")) throw new Error('FILENAME_PARTS must include "number".');
+  if (new Set(FILENAME_PARTS).size !== FILENAME_PARTS.length) throw new Error("FILENAME_PARTS repeats a part.");
+}
+
+/* ===================== FILE SYSTEM (browser API) ===================== */
+const supported = !!(window.showDirectoryPicker && window.showOpenFilePicker && window.FileSystemFileHandle &&
+                     "move" in FileSystemFileHandle.prototype);
+
+// Read the folder: all file names, and the video files sorted by filmed time.
+async function scanFolder() {
+  clips = []; allStems = new Set();
+  scanInfo = { files: 0, exts: {}, subfolders: [], unreadable: 0 };
+  const videos = [];
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind !== "file") { scanInfo.subfolders.push(name); continue; }
+    allStems.add(stemOf(name));                       // every file counts for numbering / clash checks
+    const ext = extOf(name).toLowerCase();
+    if (!VIDEO_EXTENSIONS.includes(ext)) { scanInfo.files++; scanInfo.exts[ext] = (scanInfo.exts[ext] || 0) + 1; continue; }
+    if (pickedNames && !pickedNames.has(name.toLowerCase())) continue;   // individually picked files only
+    videos.push({ name, handle });
+  }
+  // Read size/date of 20 videos at a time: quick on SD cards, and one unreadable file cannot break the list.
+  for (let i = 0; i < videos.length; i += 20) {
+    await Promise.all(videos.slice(i, i + 20).map(async v => {
+      try {
+        const f = await v.handle.getFile();
+        clips.push({ name: v.name, stem: stemOf(v.name), handle: v.handle, modified: f.lastModified, size: f.size });
+      } catch (e) { scanInfo.unreadable++; }
+    }));
+    $("source").textContent = `Reading folder... ${Math.min(i + 20, videos.length)} of ${videos.length}`;
+  }
+  clips.sort((a, b) => a.modified - b.modified || a.name.localeCompare(b.name));
+}
+
+// Rename all queued files. If ANY fails, put everything back (all-or-nothing).
+async function applyRenames(jobs) {
+  const done = [];
+  try {
+    for (const job of jobs) {
+      const oldName = job.clip.name;
+      await job.clip.handle.move(job.newName);
+      done.push({ handle: job.clip.handle, oldName, newName: job.newName });
+    }
+  } catch (err) {
+    await revert(done);
+    throw err;
+  }
+  return done;
+}
+
+// Move renamed files back to their old names, newest first.
+async function revert(done) {
+  for (const d of [...done].reverse()) await d.handle.move(d.oldName);
+}
+
+// Optional log: a CSV saved through the browser's normal download (Downloads folder),
+// NOT inside the clip folder. Nothing is written unless the coach clicks the button.
+function saveLog() {
+  const q = t => '"' + String(t).replace(/"/g, '""') + '"';
+  const csv = "timestamp,old_name,new_name\n" +
+    sessionLog.map(r => [r.time, r.oldName, r.newName].map(q).join(",")).join("\n") + "\n";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "gopro_rename_log_" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".csv";
+  a.click();
+}
+
+/* ============================ UI HELPERS ============================ */
+// In-page replacements for alert()/confirm(): nicer than the browser's own boxes.
+const ui = {
+  ask(message, withCancel) {
+    return new Promise(resolve => {
+      const dlg = $("dlg");
+      if (dlg.open) dlg.close();                  // never fail because another message is still open
+      $("dlgMsg").textContent = message;
+      $("dlgNo").hidden = !withCancel;
+      $("dlgYes").onclick = () => { resolve(true); dlg.close(); };
+      $("dlgNo").onclick = () => dlg.close();
+      dlg.onclose = () => resolve(false);          // Esc or Cancel (ignored if already answered)
+      dlg.showModal();
+    });
+  },
+  alert(message) { return this.ask(message, false); },
+  confirm(message) { return this.ask(message, true); },
+  toast(message) {                                   // short confirmation that fades away
+    const t = $("toast"); t.textContent = message; t.classList.add("show");
+    clearTimeout(this.timer); this.timer = setTimeout(() => t.classList.remove("show"), 3500);
+  }
+};
+
+/* ============================== VIEW ============================== */
+const lc = s => s.toLowerCase();
+const isReady = () => !!dirHandle;
+
+function currentFields() {
+  const iso = $("date").value;
+  return { date: iso ? formatDate(iso) : "", athlete: $("athlete").value,
+           skill: getChoice("skill"), variant: getChoice("variant") };
+}
+
+// First number to use: the coach's "Start at" if typed, otherwise automatic (continues existing numbering).
+function startNumber(fields) {
+  const typed = parseInt($("startAt").value, 10);
+  return typed > 0 ? typed : nextNumber(fields, takenStems());
+}
+
+// Shows what was chosen; unlocks steps 2-4 once there is something to work with.
+function setSource(label) {
+  $("source").textContent = label;
+  if (isReady()) document.body.dataset.ready = "yes"; else delete document.body.dataset.ready;
+}
+
+function prefillDate() {   // default the date to the day the first clip was filmed
+  if (!clips.length) return;
+  const d = new Date(clips[0].modified), p = n => String(n).padStart(2, "0");
+  $("date").value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function refreshClipList() {
+  const queued = new Set(queue.map(j => j.clip.name));
+  visible = clips.filter(c => !queued.has(c.name) && !doneNames.has(c.name));
+  ticked = new Set([...ticked].filter(n => visible.some(c => c.name === n)));
+  anchor = null;
+  const body = $("clipRows"); body.textContent = "";
+  visible.forEach((c, i) => {
+    const tr = document.createElement("tr");
+    tr.className = "clip"; tr.tabIndex = 0; tr.dataset.i = i; tr.setAttribute("role", "checkbox");
+    const cells = [null, c.name, new Date(c.modified).toLocaleString(), (c.size / 1048576).toFixed(1) + " MB"];
+    cells.forEach((t, k) => {
+      const td = document.createElement("td");
+      if (t === null) { const box = document.createElement("span"); box.className = "box"; td.appendChild(box); }
+      else td.textContent = t;
+      if (k === 3) td.className = "right";
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  });
+  redrawTicks();
+}
+
+// If a chosen folder has no videos, say exactly what it DOES contain so the cause is obvious.
+function emptyFolderMessage() {
+  const types = Object.entries(scanInfo.exts).map(([e, n]) => `${e || "(no extension)"} x${n}`).join(", ");
+  let msg = "No video files found directly in this folder. ";
+  msg += scanInfo.files ? `It holds ${scanInfo.files} other file(s): ${types}. ` : "It has no files in it. ";
+  if (scanInfo.subfolders.length)
+    msg += `It contains subfolders (${scanInfo.subfolders.join(", ")}) - choose the folder that directly holds the videos ` +
+           "instead (on a GoPro card: DCIM, then 100GOPRO). ";
+  return msg + `Recognised video types: ${VIDEO_EXTENSIONS.join(" ")}`;
+}
+
+function redrawTicks() {
+  [...$("clipRows").children].forEach((tr, i) => {
+    const on = ticked.has(visible[i].name);
+    tr.classList.toggle("ticked", on);
+    tr.setAttribute("aria-checked", String(on));
+  });
+  const empty = $("clipEmpty");
+  empty.hidden = visible.length > 0;
+  empty.textContent = !isReady() ? "Choose a folder or files above to begin."
+    : clips.length === 0 ? emptyFolderMessage() : "Every clip has been assigned or renamed.";
+  $("status").textContent = visible.length ? `${ticked.size} of ${visible.length} ticked` : "";
+  $("assign").disabled = ticked.size === 0;
+  $("assign").textContent = ticked.size ? `Assign ${ticked.size} ticked clip${ticked.size > 1 ? "s" : ""} \u2193` : "Assign ticked clips \u2193";
+  updatePreview();
+}
+
+function updatePreview() {
+  const f = currentFields(), box = $("preview");
+  if (!isReady()) { box.textContent = "Choose your clips first."; return; }
+  if (!cleanComponent(f.athlete)) { box.textContent = "Type the athlete's name to see the file name."; return; }
+  const count = Math.max(1, ticked.size), start = startNumber(f);
+  const name = n => buildStem(f, String(n).padStart(NUMBER_PADDING, "0")) + ".MP4";
+  box.textContent = count > 1 ? `${name(start)}\n...\n${name(start + count - 1)}` : name(start);
+}
+
+function refreshQueue() {
+  const body = $("queueRows"); body.textContent = "";
+  queue.forEach(j => {
+    const tr = document.createElement("tr"); if (j.group % 2) tr.className = "alt";   // alternate shading per batch
+    [j.clip.name, j.newName].forEach(t => { const td = document.createElement("td"); td.textContent = t; tr.appendChild(td); });
+    body.appendChild(tr);
+  });
+  $("queueBox").hidden = queue.length === 0;
+  $("queueEmpty").hidden = queue.length > 0;
+  $("rename").disabled = $("removeGroup").disabled = queue.length === 0;
+  $("rename").textContent = queue.length ? `Rename ${queue.length} file${queue.length > 1 ? "s" : ""}` : "Rename files";
+  $("undo").disabled = lastBatch.length === 0;
+  $("saveLog").disabled = sessionLog.length === 0;
+}
+
+// ---- Drop-down + "Type my own..." helpers (used by Skill and Variant) ----
+function getChoice(id) { return $(id).value === OWN ? $(id + "Own").value : $(id).value; }
+
+function showOwnBox(id) {   // show the text box only while "Type my own..." is selected
+  const own = $(id).value === OWN;
+  $(id + "Own").hidden = !own;
+  if (own) $(id + "Own").focus();
+}
+
+function fillSelect(id, items, blankLabel, selected) {
+  const sel = $(id); sel.innerHTML = "";
+  const add = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); };
+  if (blankLabel !== null) add("", blankLabel);
+  items.forEach(i => add(i, i));
+  add(OWN, "\u270E Type my own...");
+  sel.value = [...sel.options].some(o => o.value === selected) ? selected : sel.options[0].value;
+}
+
+function fillSkills(selected) { fillSelect("skill", Object.keys(SKILLS), null, selected); showOwnBox("skill"); }
+
+function fillVariants(selected) {   // variants depend on the skill; a typed (unknown) skill has none to offer
+  const key = Object.keys(SKILLS).find(k => lc(k) === lc(cleanComponent(getChoice("skill"))));
+  const list = SKILLS[key] || [];
+  fillSelect("variant", list, list.length ? "(choose a variant)" : "(no variant)", selected);
+  showOwnBox("variant");
+}
+
+function rememberChoices(f) {   // anything new that was typed appears in the drop-downs from now on
+  const sk = cleanComponent(f.skill), vr = cleanComponent(f.variant);
+  let key = Object.keys(SKILLS).find(k => lc(k) === lc(sk));
+  if (!key) { key = sk; SKILLS[key] = []; }
+  let variant = SKILLS[key].find(v => lc(v) === lc(vr));
+  if (vr && !variant) { variant = vr; SKILLS[key].push(vr); }
+  fillSkills(key); fillVariants(variant);
+}
+
+/* ============================ ACTIONS ============================ */
+// Re-read the folder after a rename/undo so the names on screen match the disk.
+async function syncSource() { await scanFolder(); }
+
+function resetSession() {
+  clips = []; queue = []; lastBatch = []; ticked = new Set(); doneNames = new Set(); pickedNames = null;
+}
+
+// Run a file/folder chooser. Closing it is normal (AbortError) and silent; any OTHER problem is shown, never swallowed.
+async function pick(chooser) {
+  try { return await chooser(); }
+  catch (e) {
+    if (e && e.name === "AbortError") return null;
+    await ui.alert("The file chooser could not open.\n\nReason: " + (e && e.message ? e.message : e) +
+                   "\n\nTip: open this page directly from your computer in Edge or Chrome (not from an email or Teams preview).");
+    return null;
+  }
+}
+
+// Read the (already chosen) folder and fill the screen.
+async function openSource() {
+  setSource("Reading folder...");
+  try { await scanFolder(); }
+  catch (e) { dirHandle = null; setSource("Nothing chosen yet"); return ui.alert("That folder could not be read.\n\nReason: " + e.message); }
+  prefillDate();
+  const count = `${clips.length} video${clips.length === 1 ? "" : "s"}`;
+  const skipped = scanInfo.unreadable ? `, ${scanInfo.unreadable} could not be read` : "";
+  setSource(pickedNames ? `${count} picked, in folder ${dirHandle.name}${skipped}` : `Folder: ${dirHandle.name} (${count}${skipped})`);
+  refreshClipList(); refreshQueue();
+}
+
+async function chooseFolder() {
+  if (queue.length && !(await ui.confirm("Choosing a new folder clears the list in step 4 (nothing has been renamed yet). Continue?"))) return;
+  const handle = await pick(() => window.showDirectoryPicker({ mode: "readwrite" }));
+  if (!handle) return;
+  resetSession(); dirHandle = handle;
+  await openSource();
+}
+
+// Is this picked file really inside that folder? (Compares the actual file, not just the name.)
+async function isInside(dir, fileHandle) {
+  try { return await (await dir.getFileHandle(fileHandle.name)).isSameEntry(fileHandle); }
+  catch (e) { return false; }
+}
+
+// Individual files: Chrome only allows renaming inside a folder you approve, so after picking the
+// clips we ask for their folder too (opened at the right place). Only the picked clips are then listed.
+async function chooseFiles() {
+  if (queue.length && !(await ui.confirm("Choosing different clips clears the list in step 4 (nothing has been renamed yet). Continue?"))) return;
+  const picked = await pick(() => window.showOpenFilePicker({ multiple: true,
+    types: [{ description: "Videos", accept: { "video/*": VIDEO_EXTENSIONS } }] }));
+  if (!picked || !picked.length) return;
+  // The OK click below is the fresh click the browser needs before it will open the folder chooser.
+  if (!(await ui.confirm(`You picked ${picked.length} file${picked.length > 1 ? "s" : ""}.\n\n` +
+      "Next, choose the folder they are in and click \"Edit files\" when your browser asks. " +
+      "This is needed because browsers only allow renaming inside a folder you approve."))) return;
+  const folder = await pick(async () => {
+    try { return await window.showDirectoryPicker({ mode: "readwrite", startIn: picked[0] }); }
+    catch (e) { if (e && e.name === "TypeError") return window.showDirectoryPicker({ mode: "readwrite" }); throw e; }
+  });
+  if (!folder) return;
+  const missing = [];
+  for (const h of picked) if (!(await isInside(folder, h))) missing.push(h.name);
+  if (missing.length) {
+    return ui.alert("These files are not inside the folder you chose, so nothing was changed:\n\n" +
+                    missing.slice(0, 6).join("\n") + (missing.length > 6 ? "\n..." : "") +
+                    "\n\nPlease try again and choose the folder they are in.");
+  }
+  resetSession(); dirHandle = folder; pickedNames = new Set(picked.map(h => h.name.toLowerCase()));
+  await openSource();
+}
+
+// Tick/untick one row; with Shift, tick everything from the last clicked row.
+function toggleRow(i, shift) {
+  if (shift && anchor !== null) {
+    const [lo, hi] = [Math.min(anchor, i), Math.max(anchor, i)];
+    for (let k = lo; k <= hi; k++) ticked.add(visible[k].name);
+  } else {
+    const n = visible[i].name;
+    ticked.has(n) ? ticked.delete(n) : ticked.add(n);
+    anchor = i;
+  }
+  redrawTicks();
+}
+
+function rowIndex(ev) { const tr = ev.target.closest("tr.clip"); return tr ? Number(tr.dataset.i) : null; }
+
+async function playClip(ev) {   // double-click: the two clicks cancel out, then the clip plays
+  const i = rowIndex(ev); if (i === null) return;
+  const file = await visible[i].handle.getFile();
+  window.open(URL.createObjectURL(file), "_blank");
+}
+
+async function assign() {
+  if (!isReady()) return ui.alert("Please choose your clips first (step 1).");
+  if (!ticked.size) return ui.alert("Tick one or more clips first (step 2).");
+  const f = currentFields();
+  if (!$("date").value) return ui.alert("Please choose the date.");
+  if (!cleanComponent(f.athlete)) return ui.alert("Please type the athlete's name.");
+  if (!cleanComponent(f.skill)) return ui.alert("Please choose the skill, or pick \"Type my own...\" and type it.");
+  const knownKey = Object.keys(SKILLS).find(k => lc(k) === lc(cleanComponent(f.skill)));
+  if (knownKey && SKILLS[knownKey].length && !cleanComponent(f.variant) &&
+      !(await ui.confirm("You did not choose a variant. Continue without one?"))) return;
+  const files = visible.filter(c => ticked.has(c.name));   // filmed order, not click order
+  let n = startNumber(f);
+  for (const clip of files) {
+    const stem = buildStem(f, String(n++).padStart(NUMBER_PADDING, "0"));
+    queue.push({ clip, newName: stem + extOf(clip.name), group: nextGroup });
+  }
+  nextGroup++;
+  $("startAt").value = "";                                  // "Start at" is a one-off override
+  rememberChoices(f);
+  const a = f.athlete.trim();
+  if (a && ![...$("athleteList").children].some(o => o.value === a)) {
+    const o = document.createElement("option"); o.value = a; $("athleteList").appendChild(o);
+  }
+  refreshClipList(); refreshQueue();
+}
+
+// Remove the most recent batch (a whole batch, so numbering never has a gap).
+function removeLastBatch() {
+  if (!queue.length) return;
+  const g = queue[queue.length - 1].group;
+  queue = queue.filter(j => j.group !== g);
+  refreshClipList(); refreshQueue();
+}
+
+async function collectNames() {   // current file names in the chosen folder, fresh from disk
+  const names = [];
+  for await (const [name, h] of dirHandle.entries()) if (h.kind === "file") names.push(name);
+  return names;
+}
+
+async function renameNow() {
+  const existing = new Set((await collectNames()).map(lc));
+  const seen = new Set(), problems = [];
+  for (const j of queue) {
+    const key = lc(j.newName);
+    if (seen.has(key)) problems.push(`Two files would both be called ${j.newName}`);
+    if (existing.has(key)) problems.push(`A file called ${j.newName} already exists`);
+    seen.add(key);
+  }
+  if (problems.length) return ui.alert("Nothing was changed.\n\n" + problems.join("\n"));
+  if (!(await ui.confirm(`Rename ${queue.length} file(s)?\n\nThe videos stay where they are. You can undo this afterwards.`))) return;
+  try {
+    const done = await applyRenames(queue);
+    const time = new Date().toISOString().slice(0, 19);
+    sessionLog.push(...done.map(d => ({ time, oldName: d.oldName, newName: d.newName })));
+    done.forEach(d => doneNames.add(d.newName));
+    if (pickedNames) done.forEach(d => pickedNames.add(d.newName.toLowerCase()));   // keep renamed clips in the picked set
+    lastBatch = done; queue = [];
+    await syncSource(done, "forward");
+    refreshClipList(); refreshQueue();
+    ui.toast(`${done.length} file${done.length > 1 ? "s" : ""} renamed.`);
+  } catch (err) {
+    ui.alert("Rename failed, and nothing was changed.\n\nReason: " + err.message);
+  }
+}
+
+async function undoLast() {
+  if (!lastBatch.length || !(await ui.confirm(`Restore the original names of ${lastBatch.length} file(s)?`))) return;
+  try {
+    await revert(lastBatch);
+    sessionLog.splice(sessionLog.length - lastBatch.length);
+    lastBatch.forEach(d => doneNames.delete(d.newName));
+    await syncSource(lastBatch, "back");
+    lastBatch = [];
+  } catch (err) { return ui.alert("Undo failed: " + err.message); }
+  refreshClipList(); refreshQueue();
+  ui.toast("Original names restored.");
+}
+
+/* ============================== START ============================== */
+try { validateConfig(); } catch (err) { ui.alert("Configuration problem: " + err.message); }
+if (!supported) { $("unsupported").hidden = false; $("pickFolder").disabled = $("pickFiles").disabled = true; }
+$("date").value = new Date().toISOString().slice(0, 10);
+fillSkills(); fillVariants();
+$("skill").addEventListener("change", () => { showOwnBox("skill"); fillVariants(); updatePreview(); });
+$("skillOwn").addEventListener("change", () => { fillVariants(); updatePreview(); });   // after typing, offer that skill's variants
+$("variant").addEventListener("change", () => { showOwnBox("variant"); updatePreview(); });
+["date", "athlete", "skillOwn", "variantOwn", "startAt"].forEach(id => $(id).addEventListener("input", updatePreview));
+$("pickFolder").addEventListener("click", chooseFolder);
+$("pickFiles").addEventListener("click", chooseFiles);
+$("clipRows").addEventListener("click", ev => { const i = rowIndex(ev); if (i !== null) toggleRow(i, ev.shiftKey); });
+$("clipRows").addEventListener("dblclick", playClip);
+$("clipRows").addEventListener("keydown", ev => {            // keyboard: Space/Enter ticks the focused clip
+  const i = rowIndex(ev);
+  if (i !== null && (ev.key === " " || ev.key === "Enter")) { ev.preventDefault(); toggleRow(i, ev.shiftKey); }
+});
+$("tickAll").addEventListener("click", () => { visible.forEach(c => ticked.add(c.name)); redrawTicks(); });
+$("untickAll").addEventListener("click", () => { ticked.clear(); redrawTicks(); });
+$("assign").addEventListener("click", assign);
+$("removeGroup").addEventListener("click", removeLastBatch);
+$("rename").addEventListener("click", renameNow);
+$("undo").addEventListener("click", undoLast);
+$("saveLog").addEventListener("click", saveLog);
+// Safety net: if anything unexpected goes wrong, say so instead of silently doing nothing.
+window.addEventListener("error", e => ui.alert("Something went wrong: " + e.message + "\n\nPlease reload the page and try again."));
+window.addEventListener("unhandledrejection", e => ui.alert("Something went wrong: " + (e.reason && e.reason.message ? e.reason.message : e.reason) + "\n\nPlease reload the page and try again."));
+refreshQueue(); redrawTicks();
+</script>
+</body>
+</html>
